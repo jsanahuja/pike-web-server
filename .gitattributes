@@ -1,0 +1,4 @@
+app/* linguist-vendored
+errors/* linguist-vendored
+logs/* linguist-vendored
+config.json linguist-vendored
