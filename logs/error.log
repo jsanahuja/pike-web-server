@@ -1,0 +1,14 @@
+now:Unknown 500:Sowe is misconfigured. If you're the owner, please check the logs for more info.
+now:Unknown 500:Sowe is misconfigured. If you're the owner, please check the logs for more info.
+2019-05-02:08:27:46:Unknown 500:Sowe is misconfigured. If you're the owner, please check the logs for more info.
+2019-05-02:08:27:46:Unknown 500:Sowe is misconfigured. If you're the owner, please check the logs for more info.
+2019-05-02:10:08:03:Unknown 500:Sowe is misconfigured. If you're the owner, please check the logs for more info.
+2019-05-02:10:12:56:Unknown 500:"Wrong config.json JSON format"
+2019-05-02:10:46:52:Unknown Warning - No sections defined in the config.json configuration file.
+2019-05-02:10:46:52:Unknown Warning - No sections defined in the config.json configuration file.
+2019-05-02:10:47:51:Unknown Warning - The section home has no defined paths
+2019-05-02:10:47:51:Unknown Warning - The section news has no defined paths
+2019-05-02:10:48:12:Unknown Warning - The section home has no defined paths
+2019-05-02:10:48:12:Unknown Warning - The section news has no defined paths
+2019-05-02:11:02:48:Unknown Warning - No title defined for the section home
+2019-05-02:11:03:29:Unknown Error 500 - Wrong config.json JSON format

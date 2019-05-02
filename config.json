@@ -1,0 +1,26 @@
+{
+    "sections":{
+
+        "home": {
+            "title": "Webserver news",
+            "paths": ["/", "/home"],
+
+            "template": "sections/home.html",
+            "layout":   "layout.html",
+            "header":   "header.html",
+            "footer":   "footer.html"
+        },
+        "news": {
+            "title": "Webserver news",
+            "paths": ["/news"],
+
+            "template": "sections/news.html",
+            "layout":   "layout.html",
+            "header":   "header.html",
+            "footer":   "footer.html"
+        }
+    }
+
+
+
+}
