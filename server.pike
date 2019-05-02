@@ -10,12 +10,6 @@ import MimeTypes;
 
 Protocols.HTTP.Server.Port server;
 int index = 0;
-mapping(int:Thread.Thread) threads = ([]);
-
-mapping(string:string) content_types = ([
-   "json":"application/json",
-   "pdf":"application/pdf",
-]);
 
 string get_thread_status(Thread.Thread thread){
    int status = thread->status();
@@ -43,7 +37,7 @@ int main(int argc, array(string) argv){
    //Ctrl+C
    signal(signum("SIGINT"), lambda(int sig){
       write("SIGNAL CAUGHT: "+ signame(sig) + "\n");
-      foreach(threads; int id; Thread.Thread thread){
+      foreach(Thread.all_threads(); int id; Thread.Thread thread){
          write("CLI:%d:KILL: Closing socket and killing thread... (status:%s)\n", id, get_thread_status(thread));
          thread->kill();
          if(thread->status == Thread.THREAD_RUNNING)
@@ -60,13 +54,10 @@ int main(int argc, array(string) argv){
 }
 
 void accept_connection(Protocols.HTTP.Server.Request request){
-   index++;
-   int id = index;
-   Thread.Thread thread = Thread.Thread(service_worker, id, request);
-   threads |= ([ id:thread ]);
+   Thread.Thread thread = Thread.Thread(service_worker, request);
 }
 
-void service_worker(int id, Protocols.HTTP.Server.Request request){
+void service_worker(Protocols.HTTP.Server.Request request){
    /*
    * protocol     HTTP/1.1
    * request_type GET
@@ -83,7 +74,8 @@ void service_worker(int id, Protocols.HTTP.Server.Request request){
       config = JSON.decode(Stdio.read_file("config.json"));
    };
    if(error){
-      reponse_500(id, request, "Sowe is misconfigured. If you're the owner, please check the logs for more info.");
+      reponse_500(request, "Sowe is misconfigured. If you're the owner, please check the logs for more info.");
+      log_access(ip, 500, request->protocol, request->full_query);
       log_error(ip, 500, "Wrong config.json JSON format");
       return;
    };
@@ -91,6 +83,7 @@ void service_worker(int id, Protocols.HTTP.Server.Request request){
    /** routing **/
    /*** static files ***/
    if(file_exists(APP_STATICS + request.not_query)){
+      log_access(ip, 200, request->protocol, request->full_query);
       serve_file(request, APP_STATICS + request.not_query);
       return;
    }
@@ -143,6 +136,7 @@ void service_worker(int id, Protocols.HTTP.Server.Request request){
                      "type": "text/html",
                      "length": strlen(response)
                   ]));
+                  log_access(ip, 200, request->protocol, request->full_query);
                   return;
                }
             }
@@ -153,7 +147,9 @@ void service_worker(int id, Protocols.HTTP.Server.Request request){
    }else{
       log_warning(ip, "No sections defined in the config.json configuration file.");
    }
-   response_404(id, request, request.full_query);
+   
+   log_access(ip, 404, request->protocol, request->full_query);
+   response_404(request, request.full_query);
 }
 
 bool file_exists(string file){
@@ -177,7 +173,7 @@ void serve_file(Protocols.HTTP.Server.Request request, string file){
    ]));
 }
 
-void reponse_500(int id, Protocols.HTTP.Server.Request request, string reason){
+void reponse_500(Protocols.HTTP.Server.Request request, string reason){
    string response = replace(Stdio.read_file("errors/500.html"), "__reason__", reason);
 
    request->response_and_finish(([
@@ -188,7 +184,7 @@ void reponse_500(int id, Protocols.HTTP.Server.Request request, string reason){
    ]));
 }
 
-void response_404(int id, Protocols.HTTP.Server.Request request, string route){
+void response_404(Protocols.HTTP.Server.Request request, string route){
    string response = replace(Stdio.read_file("errors/404.html"), "__route__", route);
    
    request->response_and_finish(([
@@ -212,6 +208,14 @@ string get_date(){
       two_digits(date->hour),
       two_digits(date->min),
       two_digits(date->sec)
+   );
+}
+
+void log_access(string ip, int code, string protocol, string route){
+   write(sprintf("%s:  %d %s %s \t\t\t %s \n", get_date(), code, protocol, route, ip));
+   Stdio.append_file(
+      "logs/access.log",
+      sprintf("%s:%s %s %d %s\n", get_date(), ip, protocol, code, route)
    );
 }
 
