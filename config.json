@@ -18,9 +18,15 @@
             "layout":   "layout.html",
             "header":   "header.html",
             "footer":   "footer.html"
+        },
+        "test": {
+            "title": "Webserver test",
+            "paths": ["/test"],
+
+            "template": "sections/test.html",
+            "layout":   "layout.html",
+            "header":   "header.html",
+            "footer":   "footer.html"
         }
     }
-
-
-
 }

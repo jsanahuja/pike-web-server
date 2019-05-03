@@ -1,15 +1,16 @@
 #define PORT 80
 #define MTU 4096
-#define APP_STATICS "app/statics"
 #define APP_PATH "app"
 
 import ".";
 import Utils;
 import JSON;
-import MimeTypes;
 
 Protocols.HTTP.Server.Port server;
-int index = 0;
+mapping(string:mixed) config = ([
+   "error_log": "logs/error.log",
+   "access_log": "logs/access.log"
+]);
 
 string get_thread_status(Thread.Thread thread){
    int status = thread->status();
@@ -33,6 +34,16 @@ string get_thread_status(Thread.Thread thread){
    }
 }
 
+void load_config(){
+   mixed error = catch{
+      config = JSON.decode(Stdio.read_file("server.config.json"));
+   };
+   if(error){
+      log_internal("Unable to parse server.config.json. Check file permissions, ownership and JSON format.");
+      exit(1);
+   };
+}
+
 int main(int argc, array(string) argv){
    //Ctrl+C
    signal(signum("SIGINT"), lambda(int sig){
@@ -49,6 +60,7 @@ int main(int argc, array(string) argv){
       exit(1);
    });
 
+   load_config();
    server = Protocols.HTTP.Server.Port(accept_connection, PORT);
    return - 1;
 }
@@ -58,124 +70,59 @@ void accept_connection(Protocols.HTTP.Server.Request request){
 }
 
 void service_worker(Protocols.HTTP.Server.Request request){
-   /*
-   * protocol     HTTP/1.1
-   * request_type GET
-   * query        a=1&b=2
-   * not_query    /asdg
-   * full_query   /asdg?a=1&b=2
-   * request_headers Mapping k:v
-   */
-   string ip = "Unknown";
-
-   /** config parse **/
-   mixed config;
-   mixed error = catch{
-      config = JSON.decode(Stdio.read_file("config.json"));
+   mapping(string:int|string) result;
+   mixed time = gauge{
+      result = process_request(request);
    };
-   if(error){
-      reponse_500(request, "Sowe is misconfigured. If you're the owner, please check the logs for more info.");
-      log_access(ip, 500, request->protocol, request->full_query);
-      log_error(ip, 500, "Wrong config.json JSON format");
-      return;
-   };
-
-   /** routing **/
-   /*** static files ***/
-   if(file_exists(APP_STATICS + request.not_query)){
-      log_access(ip, 200, request->protocol, request->full_query);
-      serve_file(request, APP_STATICS + request.not_query);
-      return;
-   }
-   /*** defined routing ***/
-   if(has_index(config, "sections") && mappingp(config->sections)){
-      foreach(config->sections; string key; mapping(string:mixed) section){
-         if(has_index(section, "paths") && arrayp(section->paths)){
-            foreach(section->paths, string path){
-               if(request.not_query == path){
-
-                  string layout = "__header____content____footer__", 
-                     header = "", 
-                     template = "", 
-                     footer = "",
-                     title = "";
-
-                  if(has_index(section, "layout") && stringp(section->layout) && file_exists(APP_PATH +"/"+ section->layout)){
-                     layout = Stdio.read_file(APP_PATH +"/"+ section->layout);
-                  }else{
-                     layout = "__header____content____footer__";
-                  }
-
-                  if(has_index(section, "header") && stringp(section->header) && file_exists(APP_PATH +"/"+ section->header)){
-                     header = Stdio.read_file(APP_PATH +"/"+ section->header);
-                  }
-                  
-                  if(has_index(section, "template") && stringp(section->template) && file_exists(APP_PATH +"/"+ section->template)){
-                     template = Stdio.read_file(APP_PATH +"/"+ section->template);
-                  }
-                  
-                  if(has_index(section, "footer") && stringp(section->footer) && file_exists(APP_PATH +"/"+ section->footer)){
-                     footer = Stdio.read_file(APP_PATH +"/"+ section->footer);
-                  }
-
-                  if(has_index(section, "title") && stringp(section->title)){
-                     title = section->title;
-                  }else{
-                     log_warning(ip, sprintf("No title defined for the section %s", key));
-                  }
-
-                  
-                  string response = layout;
-                  response = replace(response, "__title__", title);
-                  response = replace(response, "__header__", header);
-                  response = replace(response, "__content__", template);
-                  response = replace(response, "__footer__", footer);
-                  
-                  request->response_and_finish(([
-                     "data": response,
-                     "type": "text/html",
-                     "length": strlen(response)
-                  ]));
-                  log_access(ip, 200, request->protocol, request->full_query);
-                  return;
-               }
-            }
-         }else{
-            log_warning(ip, sprintf("The section %s has no defined paths", key));
-         }
-      }
-   }else{
-      log_warning(ip, "No sections defined in the config.json configuration file.");
-   }
-   
-   log_access(ip, 404, request->protocol, request->full_query);
-   response_404(request, request.full_query);
+   write("%s %s (%f)\n", result["path"], request->full_query, time);
+   log_access("", result["code"], request, time);
 }
 
-bool file_exists(string file){
-   bool opened = false;
-   catch{
-      Stdio.File f = Stdio.File(file, "r");
-      if(f)
-         opened = true;
-   };
-   return opened;
+mapping(string:int|string) process_request(Protocols.HTTP.Server.Request request){
+   string path = APP_PATH + request.not_query;
+   if(Stdio.exist(path)){
+      if(Stdio.is_file(path)){
+         serve_file(request, path);
+         return ([ "path": path, "code":200 ]);
+      }else{
+         path = has_suffix(path, "/") ? path : path + "/";
+         if(has_index(config, "defaults") && arrayp(config->defaults)){
+            foreach(config->defaults, string file){
+               if(Stdio.is_file(path + file)){
+                  serve_file(request, path + file);
+                  return ([ "path": path+file, "code":200 ]);
+               }
+            }
+         }
+      }
+
+      response_503(request);
+      return ([ "path": path, "code": 503 ]);
+   }
+
+   response_404(request);
+   return ([ "path": path, "code": 404 ]);
 }
 
 void serve_file(Protocols.HTTP.Server.Request request, string file){
-   string content = Stdio.read_file(file),
-   ext = Array.pop(file / ".")[0];
+   string ext = Array.pop(file / ".")[0];
 
-   request->response_and_finish(([
-      "data": content,
-      "type": MimeTypes.list[ext],
-      "length": strlen(content)
-   ]));
+   if(ext != "pike"){
+      request->response_and_finish(([
+         "file": Stdio.File(file),
+         "type": Protocols.HTTP.Server.extension_to_type(ext)
+      ]));
+   }else{
+      request->response_and_finish(([
+         "data": "no pike processor implemented yet",
+         "type": "text/plain",
+         "length": strlen("no pike processor implemented yet")
+      ]));
+   }
 }
 
 void reponse_500(Protocols.HTTP.Server.Request request, string reason){
    string response = replace(Stdio.read_file("errors/500.html"), "__reason__", reason);
-
    request->response_and_finish(([
       "data": response,
       "type": "text/html",
@@ -184,15 +131,60 @@ void reponse_500(Protocols.HTTP.Server.Request request, string reason){
    ]));
 }
 
-void response_404(Protocols.HTTP.Server.Request request, string route){
-   string response = replace(Stdio.read_file("errors/404.html"), "__route__", route);
-   
+void response_503(Protocols.HTTP.Server.Request request){
+   string response = replace(Stdio.read_file("errors/503.html"), "__route__", request.full_query);
    request->response_and_finish(([
       "data": response,
       "type": "text/html",
       "length": strlen(response),
       "error": 404
    ]));
+}
+
+void response_404(Protocols.HTTP.Server.Request request){
+   string response = replace(Stdio.read_file("errors/404.html"), "__route__", request.full_query);
+   request->response_and_finish(([
+      "data": response,
+      "type": "text/html",
+      "length": strlen(response),
+      "error": 404
+   ]));
+}
+
+
+/*******************************************************************************************************/
+/*                                                                                                     */
+/* LOGGER                                                                                              */
+/*                                                                                                     */
+/*******************************************************************************************************/
+
+void log_internal(string error){
+   write(error);
+   Stdio.append_file(
+      config->error_log,
+      sprintf("%s:ERROR: %s\n", get_date(), error)
+   );
+}
+
+void log_access(string ip, int code, Protocols.HTTP.Server.Request request, mixed time){
+   Stdio.append_file(
+      config->access_log,
+      sprintf("%s:%s:%d: %s %s ( %O ms)\n", get_date(), ip, code, request->protocol, request->full_query, time)
+   );
+}
+
+void log_error(string ip, int code, string error){
+   Stdio.append_file(
+      config->error_log,
+      sprintf("%s:%s:ERROR: %d %s\n", get_date(), ip, code, error)
+   );
+}
+
+void log_warning(string ip, string warning){
+   Stdio.append_file(
+      config->error_log,
+      sprintf("%s:%s:WARN: %s\n", get_date(), ip, warning)
+   );
 }
 
 string get_date(){
@@ -208,27 +200,5 @@ string get_date(){
       two_digits(date->hour),
       two_digits(date->min),
       two_digits(date->sec)
-   );
-}
-
-void log_access(string ip, int code, string protocol, string route){
-   write(sprintf("%s:  %d %s %s \t\t\t %s \n", get_date(), code, protocol, route, ip));
-   Stdio.append_file(
-      "logs/access.log",
-      sprintf("%s:%s %s %d %s\n", get_date(), ip, protocol, code, route)
-   );
-}
-
-void log_error(string ip, int code, string error){
-   Stdio.append_file(
-      "logs/error.log",
-      sprintf("%s:%s Error %d - %s\n", get_date(), ip, code, error)
-   );
-}
-
-void log_warning(string ip, string warning){
-   Stdio.append_file(
-      "logs/error.log",
-      sprintf("%s:%s Warning - %s\n", get_date(), ip, warning)
    );
 }

@@ -12,3 +12,9 @@ now:Unknown 500:Sowe is misconfigured. If you're the owner, please check the log
 2019-05-02:10:48:12:Unknown Warning - The section news has no defined paths
 2019-05-02:11:02:48:Unknown Warning - No title defined for the section home
 2019-05-02:11:03:29:Unknown Error 500 - Wrong config.json JSON format
+2019-05-03:09:25:15:ERROR: Unable to parse server.config.json. Check permissions, ownership and JSON format.
+2019-05-03:09:26:41:ERROR: Unable to parse server.config.json. Check permissions, ownership and JSON format.
+2019-05-03:09:27:10:ERROR: Unable to parse server.config.json. Check permissions, ownership and JSON format.
+2019-05-03:09:27:33:ERROR: Unable to parse server.config.json. Check file permissions, ownership and JSON format.
+2019-05-03:09:29:03:ERROR: Unable to parse server.config.json. Check file permissions, ownership and JSON format.
+2019-05-03:09:32:05:ERROR: Unable to parse server.config.json. Check file permissions, ownership and JSON format.
