@@ -1,5 +1,10 @@
 {
     "error_log": "logs/error.log",
     "access_log": "logs/access.log",
-    "defaults": ["index.pike", "index.html"]
+    "defaults": ["index.pike", "index.html"],
+
+
+    "sites": [
+
+    ]
 }

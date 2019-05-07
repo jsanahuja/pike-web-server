@@ -41,7 +41,7 @@ void load_config(){
    if(error){
       log_internal("Unable to parse server.config.json. Check file permissions, ownership and JSON format.");
       exit(1);
-   };
+   }
 }
 
 int main(int argc, array(string) argv){
@@ -60,6 +60,7 @@ int main(int argc, array(string) argv){
       exit(1);
    });
 
+
    load_config();
    server = Protocols.HTTP.Server.Port(accept_connection, PORT);
    return - 1;
@@ -70,58 +71,129 @@ void accept_connection(Protocols.HTTP.Server.Request request){
 }
 
 void service_worker(Protocols.HTTP.Server.Request request){
-   mapping(string:int|string) result;
+   int code;
    mixed time = gauge{
-      result = process_request(request);
+      code = process_request(request);
    };
-   write("%s %s (%f)\n", result["path"], request->full_query, time);
-   log_access("", result["code"], request, time);
+   write("%d:%s (%f)\n", code, request->full_query, time);
+   log_access("", code, request, time);
 }
 
-mapping(string:int|string) process_request(Protocols.HTTP.Server.Request request){
+int process_request(Protocols.HTTP.Server.Request request){
    string path = APP_PATH + request.not_query;
-   if(Stdio.exist(path)){
-      if(Stdio.is_file(path)){
-         serve_file(request, path);
-         return ([ "path": path, "code":200 ]);
-      }else{
-         path = has_suffix(path, "/") ? path : path + "/";
-         if(has_index(config, "defaults") && arrayp(config->defaults)){
-            foreach(config->defaults, string file){
-               if(Stdio.is_file(path + file)){
-                  serve_file(request, path + file);
-                  return ([ "path": path+file, "code":200 ]);
-               }
-            }
+
+   //Requested a file. Serving...
+   if(Stdio.exist(path) && Stdio.is_file(path)){
+      return serve(request, path);
+   }
+
+   //Requested a folder. Trying to serve a default file (config->defaults).
+   if(Stdio.exist(path) && has_index(config, "defaults") && arrayp(config->defaults)){
+      //adding the final "/" if not present
+      path = has_suffix(path, "/") ? path : path + "/";
+
+      //looking for default files
+      foreach(config->defaults, string file){
+         if(Stdio.exist(path + file) && Stdio.is_file(path + file)){
+            return serve(request, path + file);
          }
       }
-
-      response_503(request);
-      return ([ "path": path, "code": 503 ]);
+   }
+   
+   //Path exists but unable to serve anything: Permission denied
+   if(Stdio.exist(path)){
+      return response_503(request);
    }
 
-   response_404(request);
-   return ([ "path": path, "code": 404 ]);
+   //Path not found
+   return response_404(request);
 }
 
-void serve_file(Protocols.HTTP.Server.Request request, string file){
+int serve(Protocols.HTTP.Server.Request request, string file){
    string ext = Array.pop(file / ".")[0];
-
    if(ext != "pike"){
-      request->response_and_finish(([
-         "file": Stdio.File(file),
-         "type": Protocols.HTTP.Server.extension_to_type(ext)
-      ]));
+      return serve_static(request, file);
+   }else{
+      return serve_pike(request, file);
+   }
+}
+
+int serve_static(Protocols.HTTP.Server.Request request, string file){
+   string ext = Array.pop(file / ".")[0];
+   request->response_and_finish(([
+      "file": Stdio.File(file),
+      "type": Protocols.HTTP.Server.extension_to_type(ext)
+   ]));
+   return 200;
+}
+
+string preprocess_program(string file){
+   string result = "";
+   result += "void main(function write){";
+   string data = Stdio.read_file(file);
+   data = replace(data, "\r",   "");
+   data = replace(data, "\n",   "");
+   data = replace(data, "<?pike",   "||--");
+   data = replace(data, "?>",       "--||");
+
+   array(string) parts = data / "||";
+
+   foreach(parts, string part){
+      if(has_prefix(part, "--") && has_suffix(part, "--")){
+         result += replace(part, "--", "");
+      }else{
+         result += "write(\""+ replace(part, "\"", "\\\"") +"\");";
+      }
+   }
+   result += "}"; 
+   return result;
+}
+
+int serve_pike(Protocols.HTTP.Server.Request request, string file){
+   string code = preprocess_program(file);
+   string output = "";
+   mixed error1, error2, error3;
+   program p;
+
+   error1 = catch{
+      p = compile_string(code);
+   };
+
+   function buffer = lambda(string|array(string) arg, mixed ... extra){
+      mixed e = catch{
+         output += sprintf(arg, @extra);
+      };
+      if(e)
+         error2 = e;
+      if(e)
+         print_r(e);
+   };
+
+   error3 = catch{
+      p()->main(buffer);
+   };
+
+   if(error1 || error2 || error3){
+      string reason;
+      if(error1){
+         reason = "Compile error";
+      }else if(error2){
+         reason = "Parsing error";
+      }else if(error3){
+         reason = "Execution error";
+      }
+      return reponse_500(request, reason);
    }else{
       request->response_and_finish(([
-         "data": "no pike processor implemented yet",
-         "type": "text/plain",
-         "length": strlen("no pike processor implemented yet")
+         "data": output,
+         "type": "text/html",
+         "length": strlen(output)
       ]));
+      return 200;
    }
 }
 
-void reponse_500(Protocols.HTTP.Server.Request request, string reason){
+int reponse_500(Protocols.HTTP.Server.Request request, string reason){
    string response = replace(Stdio.read_file("errors/500.html"), "__reason__", reason);
    request->response_and_finish(([
       "data": response,
@@ -129,9 +201,10 @@ void reponse_500(Protocols.HTTP.Server.Request request, string reason){
       "length": strlen(response),
       "error": 500
    ]));
+   return 500;
 }
 
-void response_503(Protocols.HTTP.Server.Request request){
+int response_503(Protocols.HTTP.Server.Request request){
    string response = replace(Stdio.read_file("errors/503.html"), "__route__", request.full_query);
    request->response_and_finish(([
       "data": response,
@@ -139,9 +212,10 @@ void response_503(Protocols.HTTP.Server.Request request){
       "length": strlen(response),
       "error": 404
    ]));
+   return 503;
 }
 
-void response_404(Protocols.HTTP.Server.Request request){
+int response_404(Protocols.HTTP.Server.Request request){
    string response = replace(Stdio.read_file("errors/404.html"), "__route__", request.full_query);
    request->response_and_finish(([
       "data": response,
@@ -149,6 +223,7 @@ void response_404(Protocols.HTTP.Server.Request request){
       "length": strlen(response),
       "error": 404
    ]));
+   return 404;
 }
 
 
