@@ -1,10 +1,18 @@
 {
     "error_log": "logs/error.log",
     "access_log": "logs/access.log",
-    "defaults": ["index.pike", "index.html"],
 
-
+    "sites_path": "sites/",
     "sites": [
-
+        {
+            "domains": ["localhost"],
+            "path": "default",
+            "defaults": ["index.pike", "index.html"]
+        },
+        {
+            "domains": ["test.test"],
+            "path": "test.test",
+            "defaults": ["index.pike", "index.html"]
+        }
     ]
 }

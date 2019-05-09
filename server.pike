@@ -1,6 +1,5 @@
 #define PORT 80
 #define MTU 4096
-#define APP_PATH "app"
 
 import ".";
 import Utils;
@@ -42,6 +41,25 @@ void load_config(){
       log_internal("Unable to parse server.config.json. Check file permissions, ownership and JSON format.");
       exit(1);
    }
+   if(!has_index(config, "sites_path") || !stringp(config->sites_path) || !Stdio.exist(config->sites_path)){
+      log_internal("No sites_path defined in config file");
+      exit(2);
+   }
+   if(!has_index(config, "sites") || !arrayp(config->sites) || sizeof(config->sites) == 0){
+      log_internal("No sites defined in config file");
+      exit(3);
+   }
+
+   foreach(config->sites; int key; mapping(string:mixed) site){
+      if(!has_index(site, "path") || !stringp(site->path)){
+         log_internal(sprintf("Site path for site #%d is not properly defined", key));
+         exit(4);
+      }
+      if(!Stdio.exist(config->sites_path + site->path)){
+         log_internal("Site path could not be found: "+ config->sites_path + site->path);
+         exit(5);
+      }
+   }
 }
 
 int main(int argc, array(string) argv){
@@ -79,8 +97,27 @@ void service_worker(Protocols.HTTP.Server.Request request){
    log_access("", code, request, time);
 }
 
+mapping(string:mixed) resolve_host(string host){
+   //Iterating over sites
+   foreach(config->sites, mapping(string:mixed) site){
+      
+      //Iterating over site domains
+      if(has_index(site, "domains") && arrayp(site->domains) && sizeof(site->domains) > 0){
+         foreach(site->domains, string domain){
+            if(domain == host){
+               return site;
+            }
+         }
+      }
+   }
+   return config->sites[0];
+}
+
 int process_request(Protocols.HTTP.Server.Request request){
-   string path = APP_PATH + request.not_query;
+   mapping(string:mixed) site = resolve_host(request->request_headers->host);
+
+   string path = config->sites_path + site->path;
+   path = has_suffix(path, "/") ? path + request.not_query : path + "/" + request.not_query;
 
    //Requested a file. Serving...
    if(Stdio.exist(path) && Stdio.is_file(path)){
@@ -88,12 +125,12 @@ int process_request(Protocols.HTTP.Server.Request request){
    }
 
    //Requested a folder. Trying to serve a default file (config->defaults).
-   if(Stdio.exist(path) && has_index(config, "defaults") && arrayp(config->defaults)){
+   if(Stdio.exist(path) && has_index(site, "defaults") && arrayp(site->defaults)){
       //adding the final "/" if not present
       path = has_suffix(path, "/") ? path : path + "/";
 
       //looking for default files
-      foreach(config->defaults, string file){
+      foreach(site->defaults, string file){
          if(Stdio.exist(path + file) && Stdio.is_file(path + file)){
             return serve(request, path + file);
          }
