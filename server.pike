@@ -93,7 +93,7 @@ void service_worker(Protocols.HTTP.Server.Request request){
    mixed time = gauge{
       code = process_request(request);
    };
-   write("%d:%s (%f)\n", code, request->full_query, time);
+   write("%d:%s (%f)\n", code, request->request_raw, time);
    log_access("", code, request, time);
 }
 
@@ -114,10 +114,43 @@ mapping(string:mixed) resolve_host(string host){
 }
 
 int process_request(Protocols.HTTP.Server.Request request){
+   //Resolve site
    mapping(string:mixed) site = resolve_host(request->request_headers->host);
 
+   //Applying rewrites
+   string route = request.not_query;
+   if(has_index(site, "rewrites") && mappingp(site->rewrites) && has_index(site->rewrites, route)){
+      route = site->rewrites[route];
+   }
+
+   //Parsing POST variables over uncommon content-types
+   if(!has_index(request->request_headers, "content-type")){
+      request->request_headers["content-type"] = "application/xml";
+   }
+   if(request->request_type == "POST" && strlen(request->body_raw) > 0){
+      mapping(string:mixed) vars = ([]);
+
+      switch(request->request_headers["content-type"]){
+         case "application/json":
+            mixed error = catch{
+               vars = JSON.decode(request->body_raw);
+            };
+            break;
+         case "application/xml":
+            break;
+         case "application/x-www-form-urlencoded":
+            //already parsed by pike
+            break;
+         default:
+            log_internal("Unknown content type:" + request->request_headers["content-type"]);
+            break;
+      }
+      request->variables |= vars;
+   }
+
+
    string path = config->sites_path + site->path;
-   path = has_suffix(path, "/") ? path + request.not_query : path + "/" + request.not_query;
+   path = has_suffix(path, "/") ? path + route : path + "/" + route;
 
    //Requested a file. Serving...
    if(Stdio.exist(path) && Stdio.is_file(path)){
@@ -166,7 +199,7 @@ int serve_static(Protocols.HTTP.Server.Request request, string file){
 
 string preprocess_program(string file){
    string result = "";
-   result += "void main(function write){";
+   result += "void main(function write, mapping request){";
    string data = Stdio.read_file(file);
    data = replace(data, "\r",   "");
    data = replace(data, "\n",   "");
@@ -191,6 +224,16 @@ int serve_pike(Protocols.HTTP.Server.Request request, string file){
    string output = "";
    mixed error1, error2, error3;
    program p;
+   mapping(string:mixed) request_data = ([
+      "server": ([
+         "HTTP_PATH_REQUEST": request->not_query,
+         "HTTP_URI_REQUEST": request->full_query
+      ]),
+      "variables": request->variables
+   ]);
+   foreach(request->request_headers; string key; mixed value){
+      request_data->server["HTTP_" + replace(upper_case(key), "-", "_")] = value;
+   }
 
    error1 = catch{
       p = compile_string(code);
@@ -202,12 +245,10 @@ int serve_pike(Protocols.HTTP.Server.Request request, string file){
       };
       if(e)
          error2 = e;
-      if(e)
-         print_r(e);
    };
 
    error3 = catch{
-      p()->main(buffer);
+      p()->main(buffer, request_data);
    };
 
    if(error1 || error2 || error3){
